@@ -15,15 +15,14 @@ def contentlength(s):
 	for e in f:
 		if "Content-Length" in e:
 			return e.split(":")
+
+
 url = sys.argv[-1]
 urlp= urlparse(url)
 srv_name = urlp.netloc
 srv_path = urlp.path
 srv_port = 80
-print srv_port
-print srv_name
 srv_ip = skt.gethostbyname(srv_name) #"21.224.123.42:231"
-print srv_ip
 
 client_socket = skt.socket(skt.AF_INET, skt.SOCK_STREAM)
 client_socket.connect((srv_name, srv_port))
