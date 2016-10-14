@@ -1,0 +1,119 @@
+#!/usr/bin/env python
+import socket as skt
+import sys
+from urlparse import urlparse
+import os
+
+
+#make http request
+def make_http_request(host, obj):
+    NL="\r\n"
+    return ("GET {o} HTTP/1.1" + NL + "Host: {s}" + NL + NL).format(o=obj, s=host)
+
+def make_http_resume_GET(host, obj):
+    NL="\r\n"
+    return ("GET {o} HTTP/1.1" + NL + "Host: {s}" + NL +"Connection: close"+ NL + "Range: bytes={n}-"+NL+NL).format(o=obj, s=host)
+
+#extract header from the first .recv
+def header_cutter(s):
+    f=s.split("\r\n\r\n")
+    return f[0]
+
+#extract content length from header
+def content_length(s):
+    f=s.split("\r\n")
+    for e in f:
+        if "Content-Length" in e:
+            return e.split(":")
+
+#get header
+def get_header(client_socket):
+    header=""
+    while True:
+        data_received = client_socket.recv(8192)
+        header+=data_received
+        if "\r\n\r\n" in data_received:
+            break
+
+    return header
+
+def parse_url(url, DEFAULT_PORT=80):
+    """ Parse a given url into host, path, and port.
+        Use DEFAULT_PORT (80) if unspecified.
+    """
+    parsed_url = urlparse(url)
+    host, path, port = (parsed_url.hostname,
+                        parsed_url.path,
+                        parsed_url.port)
+    if not port:
+        port = DEFAULT_PORT
+    return (host, path, port)
+
+#load and write data
+def load_write_data(byte_count, contentlength, client_socket, f):
+    try :
+        while byte_count<=contentlength:
+            data_received = client_socket.recv(8192)
+            f.write(data_received)
+            if len(data_received)+byte_count==contentlength:
+                byte_count+=len(data_received)
+                client_socket.close()
+                break
+            byte_count+=len(data_received)
+        return byte_count
+    except KeyboardInterrupt:
+        ##**** Neeed to save endpoint and detail to continue download
+        print "Download distrubed"
+
+def check_Resume_Status(file_name):
+    #check if we already have this file
+    if os.path.isfile(file_name):
+        return True
+    else:
+        return False
+
+def main():
+    #srv name, path, port
+    url = sys.argv[-1]
+    srv_name, srv_path, srv_port =  parse_url(url)
+
+    #create socket and connection
+    client_socket = skt.socket(skt.AF_INET, skt.SOCK_STREAM)
+    client_socket.connect((srv_name, srv_port))
+
+    #make and send
+    request_str = make_http_request(srv_name, srv_path)
+    client_socket.send(request_str)
+
+    resume_status = check_Resume_Status(sys.argv[2])
+    #write and load file from http
+    if resume_status == False:
+        with open(sys.argv[2], 'wb') as f:
+            byte_count=0
+            ## TO FIX: use argparse or getopt
+            if sys.argv[1] == "-o":
+                #get header
+                header= get_header(client_socket)
+                h = header_cutter(header)
+                content = header.split("\r\n\r\n")[1]
+
+                #for chunk
+                if ("Transfer-Encoding: chunked" in h) or ("chunked" in h) or ("Chunked" in h):
+                    print "I die here"
+
+                #if content length exsist in header
+                elif "Content-Length" in h:
+                        contentlength = int(content_length(h)[1])
+                        byte_count+=len(content)
+                        #write the remaining content
+                        f.write(content)
+
+                        #load and write data
+                        byte_count=load_write_data(byte_count, contentlength, client_socket, f)
+    else:
+        f = open(sys.argv[2], "a+")
+
+
+if __name__ == '__main__':
+    main()
+#Accept-Ranges:bytes
