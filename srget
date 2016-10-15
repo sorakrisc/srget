@@ -1,0 +1,203 @@
+#!/usr/bin/env python
+import sys
+import socket as skt
+from urlparse import urlparse
+import os
+
+def make_request(req_type, what, details, ver="1.1"):
+    """ Compose an HTTP request """
+    NL = "\r\n"
+    req_line = "{verb} {w} HTTP/{v}".format(verb=req_type, w=what, v=ver)
+    details = ["{name}: {v}".format(name=n,v=v) for (n,v) in details.iteritems()]
+    detail_lines = NL.join(details)
+    full_request = "".join([req_line, NL, detail_lines, NL, NL])
+    return full_request
+
+def parse_url(url, DEFAULT_PORT=80):
+    """ Parse a given url into host, path, and port.
+        Use DEFAULT_PORT (80) if unspecified.
+    """
+    parsed_url = urlparse(url)
+    host, path, port = (parsed_url.hostname,
+                        parsed_url.path,
+                        parsed_url.port)
+    if not port:
+        port = DEFAULT_PORT
+    return (host, path, port)
+
+def parse_argv(argv):
+    """Parse sys.argv into downloader, open_command,
+        output_filename, and url if url does not http add it http
+    """
+    #checkpoint 3 -c have to add
+    try :
+        downloader = argv[0]
+        if argv[1]=="-o":
+            open_command = argv[1]
+        else:
+            print "Error command"
+        output_filename = argv[2]
+        #if url don't come wit http add http
+        if "http://" in argv[3]:
+            url = argv[3]
+        else:
+            url = "http://"+argv[3]
+
+        return (downloader, open_command, output_filename, url)
+    except IndexError:
+        print "Error command"
+
+
+class HTTPClient(object):
+    ## Size of the buffer for each recv
+
+    def __init__(self, downloader, open_command, output_filename, url):
+        object.__init__(self)
+        host, path, port = parse_url(url)
+        self.RECV_CHUNK_SIZE = 8192
+        # Create a TCP socket to thost at the right port
+        self.client_socket = skt.socket(skt.AF_INET, skt.SOCK_STREAM)
+        self.client_socket.connect((host, port))
+        #all the global var
+        self.output_filename = output_filename
+        self.url = url
+        self.host = host
+        self.path =path
+        self.port =port
+        self.byte_count = 0
+        self.resume_status = False
+        self.data =""
+        self.ini_header={}
+        self.content = ""
+        self.content_length=0
+
+        self.main()
+
+    def check_Resume_Status(self):
+        """set a boolean variable if the cache file exsist"""
+        self.resume_status = os.path.isfile(self.output_filename+"_cache"+".txt")
+
+    def send_request(self):
+        """Generate and send request"""
+        # if the there is a cache file send the request with an initial byte
+        if self.resume_status:
+            # Make a range request & deliver it
+            request = make_request('GET', self.path,
+                {'Host': self.host,
+                 'Connection': 'close'+'\r\n'+'Range: bytes='+str(self.byte_count)+'-'}
+            )
+            self.client_socket.send(request)
+        # if the cache is not there send the normal request
+        else:
+            # Make an initial request & deliver it
+            request = make_request('GET', self.path,
+                {'Host': self.host,
+                 'Connection': 'close'}
+            )
+            self.client_socket.send(request)
+
+    def recv_data(self):
+        """Receive data froom the socket and store in self.data"""
+        self.data = self.client_socket.recv(self.RECV_CHUNK_SIZE)
+
+    def get_header(self):
+        """Extract header from the recv_data()
+            then split the content from the header
+            and store all the header in a dictionary
+        """
+        self.send_request()
+        self.recv_data()
+        header_str, self.content = self.data.split("\r\n\r\n")
+        for e in header_str.split("\r\n"):
+            if ":" in e:
+                key, value = e.split(": ")
+                self.ini_header[key] = value
+
+    def write_cache(self):
+        """Create and write a cache file when download is interrupt
+            Writing 1. ETag 2. Last-Modified 3. Content-Length 4. byte_count
+        """
+        with open(self.output_filename+"_cache"+".txt", 'wb') as cache:
+            cache.write("byte_count: "+str(self.byte_count)+"\r\n")
+            if self.ini_header.has_key("ETag"):
+                cache.write("ETag: "+self.ini_header["ETag"]+"\r\n")
+            if self.ini_header.has_key("Last-Modified"):
+                cache.write("Last-Modified: "+self.ini_header["Last-Modified"]+"\r\n")
+            if self.ini_header.has_key("Content-Length"):
+                cache.write("Content-Length: "+self.ini_header["Content-Length"]+"\r\n")
+
+
+    def extract_cache(self):
+        """Extract data from the cache file"""
+        try:
+            with open(self.output_filename+"_cache"+".txt", "r")  as cache:
+                cache_data = cache.read()
+                cache_dict={}
+                for e in cache_data.split("\r\n"):
+                    if ":" in e:
+                        key, value = e.split(": ")
+                        cache_dict[key]=value
+                if cache_dict.has_key("ETag"):
+                    self.ETag = cache_dict["ETag"]
+                if cache_dict.has_key("Last-Modified"):
+                    self.Last_Modified = cache_dict["Last-Modified"]
+                if cache_dict.has_key("Content-Length"):
+                    self.content_length = int(cache_dict["Content-Length"])
+                    print "from extract: " + cache_dict["Content-Length"]
+                if cache_dict.has_key("byte_count"):
+                    self.byte_count = int(cache_dict["byte_count"])\
+        except IOError, KeyboardInterrupt:
+            print "There is a lost of connenction"
+
+    def handle_load_write_data(self, f):
+        try :
+            while self.byte_count<=self.content_length:
+                self.recv_data()
+                f.write(self.data)
+                if len(self.data)+self.byte_count==self.content_length:
+                    self.byte_count+=len(self.data)
+                    self.client_socket.close()
+                    break
+                self.byte_count+=len(self.data)
+                print self.byte_count
+        except KeyboardInterrupt, IOError:
+            ##**** Neeed to save endpoint and detail to continue download
+            print "There is a lost of connenction"
+            #writeCache(byte_count, contentlength, client_socket)
+            self.write_cache()
+
+    def write_file(self):
+        if self.ini_header.has_key("Content-Length") and not self.resume_status:
+            with open(self.output_filename, 'wb') as f:
+                self.content_length = int(self.ini_header["Content-Length"])
+                self.byte_count+=len(self.content)
+                #write the remaining content
+                f.write(self.content)
+                #load and write data
+                self.handle_load_write_data(f)
+        elif self.ini_header.has_key("Content-Length") and self.resume_status:
+            with open(self.output_filename, 'a+') as f:
+                os.remove(os.getcwd()+"/"+self.output_filename+"_cache.txt")
+                self.byte_count+=len(self.content)
+                #write the remaining content
+                f.write(self.content)
+                #load and write data
+                self.handle_load_write_data(f)
+            #***if mai mee contentlen... tum ngai wa
+
+    def main(self):
+        self.check_Resume_Status()
+        if not self.resume_status:
+            #get header"
+            self.get_header()
+            #load and write file
+            self.write_file()
+        # if cache file  exsist
+        else:
+            self.extract_cache()
+            self.get_header()
+            self.write_file()
+
+if __name__ == "__main__":
+    downloader, open_command, output_filename, url = parse_argv(sys.argv)
+    HTTPClient(downloader, open_command, output_filename, url)
