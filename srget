@@ -3,6 +3,7 @@ import sys
 import socket as skt
 from urlparse import urlparse
 import os
+import threading
 
 def make_request(req_type, what, details, ver="1.1"):
     """ Compose an HTTP request """
@@ -26,50 +27,72 @@ def parse_url(url, DEFAULT_PORT=80):
     return (host, path, port)
 
 def parse_argv(argv):
-    """Parse sys.argv into downloader, open_command,
-        output_filename, and url if url does not http add it http
+    """ Parse sys.argv into downloader, open_command, output_filename,
+        concurr_command, num_concurr, and url
+        if command is invalid return None
     """
     #checkpoint 3 -c have to add
-    try :
-        downloader = argv[0]
-        if argv[1]=="-o":
-            open_command = argv[1]
-        else:
-            print "Error command"
+    concurr_command = None
+    num_concurr = 1
+    downloader = argv[0]
+    if argv[1]=="-o":
+        open_command = argv[1]
         output_filename = argv[2]
-        #if url don't come wit http add http
-        if "http://" in argv[3]:
-            url = argv[3]
+        if "-c" == argv[3] and len(argv)==6:
+            concurr_command = argv[3]
+            num_concurr = argv[4]
+            if "http://" in argv[5]:
+                url = argv[5]
+            else:
+                url = "http://"+argv[5]
+        elif "-c" == argv[3] and len(argv)==5:
+            concurr_command = argv[3]
+            num_concurr = 5
+            if "http://" in argv[4]:
+                url = argv[4]
+            else:
+                url = "http://"+argv[4]
         else:
-            url = "http://"+argv[3]
+            if "http://" in argv[3]:
+                url = argv[3]
+            else:
+                url = "http://"+argv[3]
+        return (downloader, open_command, output_filename, concurr_command, num_concurr,  url)
+    else:
+        return None
 
-        return (downloader, open_command, output_filename, url)
-    except IndexError:
-        print "Error command"
-
+def createDownloadThread(output_filename, num_concurr, url):
+    download_thread= threading.Thread(target=HTTPClient, args=(output_filename, num_concurr, url))
+    download_thread.start()
 
 class HTTPClient(object):
     ## Size of the buffer for each recv
 
-    def __init__(self, downloader, open_command, output_filename, url):
+    def __init__(self, output_filename, num_concurr, url):
         object.__init__(self)
         host, path, port = parse_url(url)
         self.RECV_CHUNK_SIZE = 8192
+
         # Create a TCP socket to thost at the right port
         self.client_socket = skt.socket(skt.AF_INET, skt.SOCK_STREAM)
         self.client_socket.connect((host, port))
-        #all the global var
+
         self.output_filename = output_filename
+        self.num_concurr = num_concurr
+
         self.url = url
         self.host = host
-        self.path =path
-        self.port =port
+        self.path = path
+        self.port = port
+
+        # all the global var
         self.byte_count = 0
         self.resume_status = False
         self.data =""
         self.ini_header={}
         self.content = ""
         self.content_length=0
+
 
         self.main()
 
@@ -101,7 +124,7 @@ class HTTPClient(object):
         self.data = self.client_socket.recv(self.RECV_CHUNK_SIZE)
 
     def get_header(self):
-        """Extract header from the recv_data()
+        """ Send request to the server in order to Extract header from the recv_data()
             then split the content from the header
             and store all the header in a dictionary
         """
@@ -124,7 +147,7 @@ class HTTPClient(object):
             if self.ini_header.has_key("Last-Modified"):
                 cache.write("Last-Modified: "+self.ini_header["Last-Modified"]+"\r\n")
             if self.ini_header.has_key("Content-Length"):
-                cache.write("Content-Length: "+self.ini_header["Content-Length"]+"\r\n")
+                cache.write("Content-Length: "+str(self.content_length)+"\r\n")
 
 
     def extract_cache(self):
@@ -145,7 +168,7 @@ class HTTPClient(object):
                     self.content_length = int(cache_dict["Content-Length"])
                     print "from extract: " + cache_dict["Content-Length"]
                 if cache_dict.has_key("byte_count"):
-                    self.byte_count = int(cache_dict["byte_count"])\
+                    self.byte_count = int(cache_dict["byte_count"])
         except IOError, KeyboardInterrupt:
             print "There is a lost of connenction"
 
@@ -198,6 +221,16 @@ class HTTPClient(object):
             self.get_header()
             self.write_file()
 
+
 if __name__ == "__main__":
-    downloader, open_command, output_filename, url = parse_argv(sys.argv)
-    HTTPClient(downloader, open_command, output_filename, url)
+    if parse_argv(sys.argv) != None:
+        downloader, open_command, output_filename, concurr_command, num_concurr, url = parse_argv(sys.argv)
+        if (open_command =="-o") and  (concurr_command=="-c"):
+            for i in range(int(num_concurr)):
+                tempfile= str(i)+"_temp_"+output_filename
+                print tempfile
+                createDownloadThread(tempfile, num_concurr, url)
+        else:
+            HTTPClient(output_filename, num_concurr, url)
+    else:
+        print "Invalid Command"
