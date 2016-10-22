@@ -17,11 +17,4 @@ modified, content length, and the number of byte written
 Then if the user would want to download the same file the PROGRAM
 would find the existence of the cache file and resume download
 
-
-IMPROVEMENT:
-
-save header in dictionary
-do coding in OO
-Resume downloading is utilized
-
-trying thread#1
+Support concurrent file download (not resumable)
