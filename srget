@@ -61,12 +61,6 @@ def parse_argv(argv):
     else:
         return None
 
-def createDownloadThread(output_filename, num_concurr, r, end, url):
-    """Create download thread"""
-    thrd = HTTPClient(output_filename, num_concurr, r, end, url)
-    download_thread= threading.Thread(target=thrd.main())
-    download_thread.start()
-
 def check_cache_file(temp_file_lst):
     """check if there is a lost of connection in either one of the thread"""
     for f in temp_file_lst:
@@ -78,13 +72,26 @@ def merge_files(output_filename, temp_file_lst):
     """ concatenate multiple files together
         and delete the file that is already merged
     """
-    with open(output_filename, 'w') as f:
-        for fname in temp_file_lst:
-            with open(fname) as infile:
-                for line in infile:
-                    f.write(line)
-            os.remove(os.getcwd()+"/"+fname)
+    try:
+        with open(output_filename, 'w') as f:
+            for fname in temp_file_lst:
+                with open(fname) as infile:
+                    for line in infile:
+                        f.write(line)
+                os.remove(os.getcwd()+"/"+fname)
+    except IOError, KeyboardInterrupt:
+        print "There is a lost of connenction: Have to redownload everythin"
 
+def extract_cache(output_filename):
+    """Extract data from the cache file"""
+    with open(output_filename, "r")  as cache:
+        cache_data = cache.read()
+        cache_dict={}
+        for e in cache_data.split("\r\n"):
+            if ":" in e:
+                key, value = e.split(": ")
+                cache_dict[key]=value
+    return cache_dict
 
 class HTTPClient(object):
     ## Size of the buffer for each recv
@@ -119,8 +126,6 @@ class HTTPClient(object):
         self.content_length= 0
         self.startpoint = startpoint
         self.endpoint = endpoint
-
-        # self.main()
 
     def check_Resume_Status(self):
         """set a boolean variable if the cache file exsist"""
@@ -172,7 +177,6 @@ class HTTPClient(object):
             and normal: sending initial request
         """
         # if the there is a cache file send the request with an initial byte
-        # first one
         if self.num_concurr>1 and self.num_temp==1:
             request = make_request('GET', self.path,
                 {'Host': self.host,
@@ -190,7 +194,6 @@ class HTTPClient(object):
                  '-'+str(self.num_temp * self.startpoint)}
             )
             self.client_socket.send(request)
-        # last one
         elif self.num_concurr>1 and self.num_concurr==self.num_temp:
             request = make_request('GET', self.path,
                 {'Host': self.host,
@@ -211,11 +214,16 @@ class HTTPClient(object):
         """Receive data froom the socket and store in self.data"""
         self.data = self.client_socket.recv(self.RECV_CHUNK_SIZE)
 
-    def get_content_length(self):
+    def get_etag_lastmod_content_length(self):
         self.send_request()
         self.get_header()
-        return int(self.ini_header["Content-Length"])
 
+        if self.ini_header.has_key("Content-Length") and self.ini_header.has_key("ETag") and self.ini_header.has_key("Last-Modified"):
+            return (int(self.ini_header["Content-Length"]), str(self.ini_header["ETag"]), str(self.ini_header["Last-Modified"]))
+        elif self.ini_header.has_key("Content-Length"):
+            return (int(self.ini_header["Content-Length"]), None, None)
+        else:
+            return (None, None, None)
     def get_header(self):
         """ Extract header from the recv_data()
             then split the content from the header
@@ -241,7 +249,7 @@ class HTTPClient(object):
             if self.ini_header.has_key("Content-Length"):
                 cache.write("Content-Length: "+str(self.content_length)+"\r\n")
 
-
+                    # print "from extract: " + cache_dict["Content-Length"
     def extract_cache(self):
         """Extract data from the cache file"""
         try:
@@ -258,7 +266,6 @@ class HTTPClient(object):
                     self.Last_Modified = cache_dict["Last-Modified"]
                 if cache_dict.has_key("Content-Length"):
                     self.content_length = int(cache_dict["Content-Length"])
-                    # print "from extract: " + cache_dict["Content-Length"]
                 if cache_dict.has_key("byte_count"):
                     self.byte_count = int(cache_dict["byte_count"])
         except IOError, KeyboardInterrupt:
@@ -272,12 +279,9 @@ class HTTPClient(object):
                 if len(self.data)+self.byte_count==self.content_length:
                     self.byte_count+=len(self.data)
                     self.client_socket.close()
-                    # print "lllll "+self.output_filename +" "+str(self.byte_count)+" "+str(self.content_length)
                     break
                 self.byte_count+=len(self.data)
-                # print self.output_filename +" "+str(self.byte_count)+" "+str(self.content_length)
         except KeyboardInterrupt, IOError:
-            ## **** Neeed to save endpoint and detail to continue download
             print "There is a lost of connenction"
             self.write_cache()
 
@@ -289,7 +293,6 @@ class HTTPClient(object):
                 #write the remaining content
                 f.write(self.content)
                 #load and write data
-                # print "Content-Length"+str(self.content_length)
                 self.handle_load_write_data(f)
         elif self.ini_header.has_key("Content-Length") and self.resume_status:
             with open(self.output_filename, 'a+') as f:
@@ -299,13 +302,11 @@ class HTTPClient(object):
                 f.write(self.content)
                 #load and write data
                 self.handle_load_write_data(f)
-            #***if mai mee contentlen... tum ngai wa
+
 
     def main(self):
         self.check_Resume_Status()
         if (os.path.isfile(self.output_filename) and not self.resume_status):
-            print self.output_filename+ " already exsist"
-
         #if resume status is false
         elif not self.resume_status:
             self.send_request()
@@ -313,37 +314,44 @@ class HTTPClient(object):
             self.get_header()
             #load and write file
             self.write_file()
-            #print "Download complete: "+self.output_filename
         # if cache file  exsist
         else:
             self.extract_cache()
             self.send_resume_request()
             self.get_header()
             self.write_file()
-            #print "Download complete: "+self.output_filename
-
 
 if __name__ == "__main__":
     if parse_argv(sys.argv) != None:
         downloader, open_command, output_filename, concurr_command, num_concurr, url = parse_argv(sys.argv)
-        # **inefficient if there is a resume then u dont have to request for content_length again
-        cont_length=HTTPClient(output_filename, 1, 1, 1, url).get_content_length()
+        cont_length, etag, lastmod =HTTPClient(output_filename, 1, 1, 1, url).get_etag_lastmod_content_length()
         r= cont_length/int(num_concurr)
-        # print "totalcont_length:"+ str(cont_length)
-        # print "num_concurr: "+str(num_concurr)
-        # print "Range: "+str(r)
-        if (open_command =="-o") and  (concurr_command=="-c"):
+
+        if etag==None and lastmod==None and (os.path.isfile(output_filename+"_cache.txt")):
+            os.remove(os.getcwd()+"/"+output_filename+"_cache.txt")
+        if (os.path.isfile(output_filename) and not (os.path.isfile(output_filename+"_cache.txt"))):
+            print "The file already exsist"
+        elif (open_command) != "-o":
+            print "Wrong Command"
+        elif cont_length==None:
+            print "The link is not supported by the program"
+
+        elif concurr_command=="-c":
             temp_file_lst=[]
+            thrdList=[]
             for i in range(1,int(num_concurr)+1):
                 temp_file= str(i)+"_temp_"+output_filename
                 temp_file_lst.append(temp_file)
-                createDownloadThread(temp_file, num_concurr, r, cont_length, url)
-
+                thrds = HTTPClient(temp_file, num_concurr, r, cont_length, url)
+                thrd= threading.Thread(target=thrds.main())
+                thrdList.append(thrd)
+                thrd.start()
+            for echthrd in thrdList:
+                echthrd.join()
+            # if there is no cache file merge them
             if not check_cache_file(temp_file_lst):
-                #merge file void function
+                # merge file void function
                 merge_files(output_filename, temp_file_lst)
-
-
         else:
             HTTPClient(output_filename, num_concurr, r, cont_length, url).main()
     else:

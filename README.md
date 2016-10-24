@@ -2,11 +2,20 @@
 
 This code was written on Linux. This program is a resumable concurrent file downloader. This program run through command-line and does not support https, and chunked transfer encoding.
 
+OBJECTIVE:
+As an example, the command srget -o test.txt http://pantip.com/ will download the page at http://pantip.com and save that into test.txt. Users can optionally ask the program to download from a specific
+port by giving the port parameter in the url (e.g., http://pluto.muic.io:3000/).
+
+The -c option is optional. When supplied, the program will download using the specified numConn connec-
+tions simultaneously. If only the -c is present but without the number of connections specified, it will use a default
+of 5 simultaneous connections. Notice that when used in conjunction with resume, the program may be called
+with a different number of connections (which it should respect).
+
 FEATURES:
   1. Download file
   2. Download files in background thread simultaneously
   3. Able to resume the download when interruption occur
-  4. Set number of concurrent (default at 5)
+  4. Set desired numbers of concurrent (default at 5)
 
 SUMMARY OF MY PROGRAM:
 
@@ -25,3 +34,6 @@ would find the existence of the cache file and resume download
 
 ROADMAP:
   o Supports chunked transfer encoding
+  o thread run synchronously
+  o when the program cannot be call with different number of connections when resume
+  o support link without content length
